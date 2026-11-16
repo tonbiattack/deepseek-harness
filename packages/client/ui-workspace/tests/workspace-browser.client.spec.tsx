@@ -244,6 +244,22 @@ describe('WorkspaceBrowser', () => {
     expect(names()).toEqual(['newer', 'older'])
   })
 
+  it('orders Workspace headings by recency in Last updated and keeps Host order in Manual', () => {
+    localStorage.clear()
+    const preferences = createWorkspaceViewStore().create()
+    preferences.actions.setGroupExpanded('stale', true)
+    preferences.actions.setGroupExpanded('fresh', true)
+    const workspaces = workspaceState([workspace('stale', ['old']), workspace('fresh', ['new'])])
+    const sessions = sessionState([summary('old', 10), summary('new', 90)])
+    const b = mount({ useSessions: hook(sessions), useWorkspaces: hook(workspaces) })
+    const headings = () => screen.getAllByRole('treeitem')
+      .filter(row => row.getAttribute('aria-expanded') !== null)
+      .map(row => row.textContent)
+    expect(headings()).toEqual(['fresh', 'stale'])
+    act(() => { b.store.actions.setOrderBy('manual', {}) })
+    expect(headings()).toEqual(['stale', 'fresh'])
+  })
+
   it.each(['workspace', 'flat', 'ungrouped'] as const)('starts Manual from the current %s order and forgets discarded layouts', (mode) => {
     localStorage.clear()
     const preferences = createWorkspaceViewStore().create()
@@ -2808,6 +2824,21 @@ describe('Workspace tree grouping', () => {
     fireEvent.click(screen.getByRole('treeitem'))
     expect(b.store.getSnapshot().groupExpansion).toEqual({ child: true })
     expect(screen.getByText('child-session')).toBeTruthy()
+  })
+
+  it('selects Manual when a Workspace drop rewrites the Host group order', () => {
+    localStorage.clear()
+    const preferences = createWorkspaceViewStore().create()
+    preferences.actions.setOrderBy('updated', {})
+    const b = mount({ useWorkspaces: hook(workspaceState([workspace('alpha', []), workspace('beta', [])])) })
+    expect(b.store.getSnapshot().orderBy).toBe('updated')
+    const alpha = screen.getByText('alpha').closest('[role="treeitem"]') as HTMLElement
+    const beta = screen.getByText('beta').closest('[role="treeitem"]') as HTMLElement
+    fireEvent.dragStart(alpha, { dataTransfer: dragData() })
+    fireDrag(beta.parentElement as HTMLElement, 'drop', 100)
+    fireEvent.dragEnd(alpha)
+    expect(b.props.insertWorkspaceBefore).toHaveBeenCalledWith(wid('alpha'), undefined)
+    expect(b.store.getSnapshot().orderBy).toBe('manual')
   })
 
   it('keeps Workspace drag within its parent and uses the next displayed sibling as anchor', () => {

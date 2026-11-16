@@ -164,6 +164,53 @@ export function orderByRecency(
 }
 
 /**
+ * Order Workspace groups by their newest visible non-blank Session.
+ * @param workspaces - Workspaces in Host order, used to break ties.
+ * @param list - current Session summaries and selection.
+ * @param rowState - archive visibility for this view.
+ * @param nest - include descendant Workspace Sessions in a parent's rank.
+ * @returns Workspaces ordered newest first, with empty groups last in Host order.
+ */
+export function orderWorkspacesByRecency(
+  workspaces: readonly WorkspaceView[],
+  list: SessionListState,
+  rowState: SessionRowState,
+  nest: boolean,
+): WorkspaceView[] {
+  const current = mainSessionId(list)
+  const archived = new Set(rowState.archivedSessionIds)
+  const paths = workspaces.map(workspace => workspace.path)
+  const byPath = new Map(workspaces.map(workspace => [workspace.path, workspace.workspaceId]))
+  const ranks = new Map<WorkspaceId, number>()
+  for (const workspace of workspaces) {
+    let rank = Number.NEGATIVE_INFINITY
+    for (const id of workspace.sessionIds) {
+      const session = list.byId[id]
+      if (session !== undefined && !session.blank && sessionVisible(session, current, archived, rowState.archivedFilter)) {
+        rank = Math.max(rank, session.updatedAt)
+      }
+    }
+    ranks.set(workspace.workspaceId, rank)
+  }
+  if (nest) {
+    for (const workspace of workspaces) {
+      const rank = ranks.get(workspace.workspaceId) ?? Number.NEGATIVE_INFINITY
+      let path = owningParentFolder(workspace.path, paths)
+      while (path !== undefined) {
+        const parent = byPath.get(path)
+        if (parent !== undefined) ranks.set(parent, Math.max(ranks.get(parent) ?? Number.NEGATIVE_INFINITY, rank))
+        path = owningParentFolder(path, paths)
+      }
+    }
+  }
+  return [...workspaces].sort((left, right) => {
+    const a = ranks.get(left.workspaceId) ?? Number.NEGATIVE_INFINITY
+    const b = ranks.get(right.workspaceId) ?? Number.NEGATIVE_INFINITY
+    return a === b ? 0 : b - a
+  })
+}
+
+/**
  * Reconcile a browser-local manual order with current account membership.
  * Saved entries retain their relative order; new ordinary members follow them by recency.
  * @param memberIds - authoritative account membership.

@@ -34,7 +34,8 @@ import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, sessionSearchIndex, owningGroupKey, owningParentFolder,
+  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, orderWorkspacesByRecency, sessionSearchIndex,
+  owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
@@ -266,7 +267,7 @@ type SessionTreeProps = Pick<
   list: SessionListState
   /** Host account home for POSIX hover-path abbreviation. */
   home?: string | undefined
-  /** Workspaces in Host group order with browser-projected Session order. */
+  /** Workspaces in display order with browser-projected Session order. */
   workspaces: readonly WorkspaceView[]
   /** Browser-projected order for Sessions outside every Workspace. */
   ungroupedSessionIds: readonly SessionId[]
@@ -276,6 +277,8 @@ type SessionTreeProps = Pick<
   animationResetKey: string
   /** Nest Workspaces under their nearest registered ancestors. */
   nestWorkspaces: boolean
+  /** Select Manual order, whose Workspace sequence is the Host group order a drag rewrites. */
+  selectManualOrder: () => void
   /** Explicit persisted group expansion, including descendants in tree mode. */
   groupExpansion: Readonly<Record<string, boolean>>
   /** Persist one Workspace group's expansion. */
@@ -318,7 +321,7 @@ function SessionTree({
   onSessionRenameRequest,
   renderSlot, renderFactorySlot, useContextMenuTarget, useContextMenu,
   insertWorkspaceBefore,
-  nestWorkspaces, groupExpansion, setGroupExpanded,
+  nestWorkspaces, selectManualOrder, groupExpansion, setGroupExpanded,
   setSessionOrder, home, t,
   revealSessionId, onSessionRevealed, shortcuts,
 }: SessionTreeProps) {
@@ -445,6 +448,9 @@ function SessionTree({
       ? siblings.length
       : siblings.findIndex(workspace => workspace.workspaceId === anchor)
     if (sourceIndex !== -1 && (anchorIndex === sourceIndex || anchorIndex === sourceIndex + 1)) return
+    // The Host order a drag rewrites is the Manual sequence, so the drop selects
+    // Manual instead of leaving the row where Last updated puts it.
+    selectManualOrder()
     insertWorkspaceBefore(activeDrag.workspaceId, anchor).catch((reason: unknown) => {
       console.warn('workspace reorder rejected:', reason)
     })
@@ -998,19 +1004,24 @@ export function WorkspaceBrowser({
     [orderState, archivedFilter],
   )
   const flatMemberIds = useMemo(() => sessionMemberIds(list), [list])
-  const orderedWorkspaces = useMemo(() => workspaces.map((workspace) => {
-    const memberIds = workspace.sessionIds
-    const baseOrder = orderBy === 'updated'
-      ? orderByRecency(memberIds, list.byId)
-      : reconcileManualOrder(memberIds, sessionOrderByAccount[workspace.workspaceId], list.byId, orderState)
-    return {
-      ...workspace,
-      sessionIds: pinCurrentBlank(
-        baseOrder,
-        currentBlank !== undefined && memberIds.includes(currentBlank) ? currentBlank : undefined,
-      ),
-    }
-  }), [currentBlank, list.byId, orderBy, orderState, sessionOrderByAccount, workspaces])
+  const orderedWorkspaces = useMemo(() => {
+    const displayOrder = orderBy === 'updated'
+      ? orderWorkspacesByRecency(workspaces, list, rowState, groupBy === 'workspace-tree')
+      : workspaces
+    return displayOrder.map((workspace) => {
+      const memberIds = workspace.sessionIds
+      const baseOrder = orderBy === 'updated'
+        ? orderByRecency(memberIds, list.byId)
+        : reconcileManualOrder(memberIds, sessionOrderByAccount[workspace.workspaceId], list.byId, orderState)
+      return {
+        ...workspace,
+        sessionIds: pinCurrentBlank(
+          baseOrder,
+          currentBlank !== undefined && memberIds.includes(currentBlank) ? currentBlank : undefined,
+        ),
+      }
+    })
+  }, [currentBlank, groupBy, list, orderBy, orderState, rowState, sessionOrderByAccount, workspaces])
   const orderedUngroupedSessionIds = useMemo(() => {
     const baseOrder = orderBy === 'updated'
       ? orderByRecency(ungroupedMemberIds, list.byId)
@@ -1423,6 +1434,7 @@ export function WorkspaceBrowser({
                 ungroupedSessionIds={orderedUngroupedSessionIds}
                 workspaceReady={workspaceReady}
                 nestWorkspaces={groupBy === 'workspace-tree'}
+                selectManualOrder={() => { actions.setOrderBy('manual', activeSessionOrders) }}
                 animationResetKey={`${groupBy}/${orderBy}/${archivedFilter}`}
                 groupExpansion={groupExpansion}
                 setGroupExpanded={actions.setGroupExpanded}

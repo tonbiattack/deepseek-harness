@@ -10,7 +10,8 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { SessionProjectionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   type ArchivedFilter,
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, sessionSearchIndex, owningGroupKey, owningParentFolder,
+  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, orderWorkspacesByRecency, sessionSearchIndex,
+  owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -257,6 +258,39 @@ describe('Session ordering', () => {
       .toEqual([sid('blank'), sid('newer'), sid('older')])
     expect(pinCurrentBlank([sid('newer'), sid('older')], undefined))
       .toEqual([sid('newer'), sid('older')])
+  })
+})
+
+describe('orderWorkspacesByRecency', () => {
+  it('orders Workspaces by their newest visible Session and keeps empty ones last', () => {
+    const sessions = list(summary('old', 10), summary('new', 30), summary('mid', 20))
+    const workspaces = [workspace('empty', []), workspace('stale', ['old']), workspace('fresh', ['mid', 'new'])]
+    expect(orderWorkspacesByRecency(workspaces, sessions, noRows, false).map(row => row.workspaceId))
+      .toEqual([wid('fresh'), wid('stale'), wid('empty')])
+  })
+
+  it('ignores the selected blank and archived Sessions the filter hides', () => {
+    const sessions = list(
+      summary('plain', 10),
+      { ...summary('blank', 90), blank: true },
+      summary('archived', 80),
+    )
+    const workspaces = [workspace('plain', ['plain']), workspace('blank', ['blank']), workspace('archived', ['archived'])]
+    expect(orderWorkspacesByRecency(workspaces, sessions, rowState({ archived: ['archived'] }), false)
+      .map(row => row.workspaceId)).toEqual([wid('plain'), wid('blank'), wid('archived')])
+    expect(orderWorkspacesByRecency(workspaces, sessions, rowState({ archived: ['archived'], archivedFilter: 'show' }), false)
+      .map(row => row.workspaceId)).toEqual([wid('archived'), wid('plain'), wid('blank')])
+  })
+
+  it('ranks a parent by its descendants in tree mode', () => {
+    const sessions = list(summary('root', 10), summary('child', 40))
+    const root = { ...workspace('root', ['root']), path: '/projects' }
+    const child = { ...workspace('child', ['child']), path: '/projects/child' }
+    const workspaces = [root, child]
+    expect(orderWorkspacesByRecency(workspaces, sessions, noRows, false).map(row => row.workspaceId))
+      .toEqual([wid('child'), wid('root')])
+    expect(orderWorkspacesByRecency(workspaces, sessions, noRows, true).map(row => row.workspaceId))
+      .toEqual([wid('root'), wid('child')])
   })
 })
 
